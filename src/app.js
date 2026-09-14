@@ -48,6 +48,10 @@ app.use(generalLimiter);
 // transiteront jamais par ce dossier statique (CLAUDE.md, section Uploads).
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', service: 'mounesba-backend' });
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/cities', cityRoutes);
