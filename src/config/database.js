@@ -1,9 +1,11 @@
 const { Sequelize } = require('sequelize');
+const mysql2 = require('mysql2');
 
 require('dotenv').config();
 
 const sequelizeOptions = {
   dialect: 'mysql',
+  dialectModule: mysql2,
   logging: false,
   define: {
     underscored: true,
