@@ -7,7 +7,18 @@ const { sanitizeSvg, MAX_SVG_SIZE } = require('../utils/sanitizeSvg');
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 Mo
 const UPLOAD_DIR = path.join(__dirname, '../../uploads/listings');
 
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+// Systeme de fichiers en lecture seule sur les plateformes serverless
+// (Vercel...) hors /tmp : ne pas laisser mkdirSync faire planter le chargement
+// du module (donc toute l'app) au demarrage - non bloquant.
+function ensureDir(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    if (err.code !== 'EROFS') throw err;
+  }
+}
+
+ensureDir(UPLOAD_DIR);
 
 const MAGIC_BYTES = {
   'image/jpeg': [0xff, 0xd8, 0xff],
@@ -36,7 +47,7 @@ function persistBuffer(buffer, destDir) {
   const realMimeType = detectRealMimeType(buffer);
   if (!realMimeType) return null;
 
-  fs.mkdirSync(destDir, { recursive: true });
+  ensureDir(destDir);
   const extension = realMimeType === 'image/png' ? '.png' : '.jpg';
   const filename = `${crypto.randomBytes(16).toString('hex')}${extension}`;
   fs.writeFileSync(path.join(destDir, filename), buffer);
@@ -93,7 +104,7 @@ function replaceStoredFile(instance, field, newImageUrl) {
 const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50 Mo
 const VIDEO_UPLOAD_DIR = path.join(__dirname, '../../uploads/videos');
 
-fs.mkdirSync(VIDEO_UPLOAD_DIR, { recursive: true });
+ensureDir(VIDEO_UPLOAD_DIR);
 
 // mp4 : signature 'ftyp' a l'offset 4 (pas 0). webm : en-tete EBML a l'offset 0.
 const VIDEO_MAGIC_BYTES = {
@@ -142,7 +153,7 @@ const uploadThumbnailOnly = multer({
 // le contenu est assaini (voir utils/sanitizeSvg.js) avant d'etre ecrit sur
 // disque. Limite basse (100 Ko) car une icone n'a pas besoin de plus.
 const ICON_UPLOAD_DIR = path.join(__dirname, '../../uploads/icons');
-fs.mkdirSync(ICON_UPLOAD_DIR, { recursive: true });
+ensureDir(ICON_UPLOAD_DIR);
 
 const uploadIcon = multer({
   storage: multer.memoryStorage(),
@@ -175,7 +186,7 @@ function persistVerifiedIcon(req, res, next) {
 // photos/videos) : seul un endpoint authentifie (proprietaire de la fiche ou
 // admin) peut les lire, jamais une URL publique devinable.
 const LEGAL_UPLOAD_DIR = path.join(__dirname, '../../private-uploads/legal');
-fs.mkdirSync(LEGAL_UPLOAD_DIR, { recursive: true });
+ensureDir(LEGAL_UPLOAD_DIR);
 
 module.exports = {
   upload,
