@@ -2,7 +2,7 @@
 // prestataires), exactement comme dans docs/farahbooking_schema.sql, puis
 // quelques prestataires et avis de démonstration.
 
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const db = require('./models');
 const { PLAN_CATALOG } = require('./services/planService');
 const { generateUniqueListingSlug } = require('./utils/slugify');
