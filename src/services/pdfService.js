@@ -21,7 +21,14 @@ function addDays(dateStr, days) {
 }
 
 const DOCUMENTS_DIR = path.join(__dirname, '../../uploads/documents');
-fs.mkdirSync(DOCUMENTS_DIR, { recursive: true });
+// Systeme de fichiers en lecture seule sur les plateformes serverless
+// (Vercel...) hors /tmp : ne jamais laisser mkdirSync faire planter le
+// chargement du module (donc toute l'app) au demarrage - best-effort.
+try {
+  fs.mkdirSync(DOCUMENTS_DIR, { recursive: true });
+} catch (err) {
+  console.error(`Impossible de creer le dossier de documents ${DOCUMENTS_DIR} :`, err.message);
+}
 
 function writePdf(buildFn) {
   return new Promise((resolve, reject) => {
