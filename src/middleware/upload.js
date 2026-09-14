@@ -8,13 +8,15 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 Mo
 const UPLOAD_DIR = path.join(__dirname, '../../uploads/listings');
 
 // Systeme de fichiers en lecture seule sur les plateformes serverless
-// (Vercel...) hors /tmp : ne pas laisser mkdirSync faire planter le chargement
-// du module (donc toute l'app) au demarrage - non bloquant.
+// (Vercel...) hors /tmp : selon le montage, une ecriture refusee remonte en
+// EROFS ou en ENOENT (repertoire "introuvable" car impossible a creer). Ne
+// jamais laisser mkdirSync faire planter le chargement du module (donc toute
+// l'app) au demarrage - best-effort, non bloquant.
 function ensureDir(dir) {
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch (err) {
-    if (err.code !== 'EROFS') throw err;
+    console.error(`Impossible de creer le dossier d'upload ${dir} :`, err.message);
   }
 }
 
