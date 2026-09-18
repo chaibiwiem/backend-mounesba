@@ -44,38 +44,46 @@ app.use(
 app.use(express.json());
 app.use(generalLimiter);
 
+// Certains hebergeurs mutualises (cPanel/Passenger) exposent l'app derriere
+// un sous-chemin (ex. /mounesba) sans le retirer de l'URL transmise a
+// Express - toutes les routes sont donc montees sous ce prefixe, vide par
+// defaut (Vercel, dev local) pour ne rien changer ailleurs.
+const basePath = process.env.BASE_PATH || '';
+const router = express.Router();
+
 // Galerie prestataire (photos publiques) — les documents legaux sensibles ne
 // transiteront jamais par ce dossier statique (CLAUDE.md, section Uploads).
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+router.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-app.get('/', (req, res) => {
+router.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'mounesba-backend' });
 });
 
-app.use('/api/auth', authRoutes);
-app.use('/api/categories', categoryRoutes);
-app.use('/api/cities', cityRoutes);
-app.use('/api/listings', listingRoutes);
-app.use('/api/leads', leadRoutes);
-app.use('/api/images', imageRoutes);
-app.use('/api/videos', videoRoutes);
-app.use('/api/packages', packageRoutes);
-app.use('/api/availability', availabilityRoutes);
-app.use('/api/promotions', promotionRoutes);
-app.use('/api/clients', clientRoutes);
-app.use('/api/contracts', contractRoutes);
-app.use('/api/invoices', invoiceRoutes);
-app.use('/api/reviews', reviewRoutes);
-app.use('/api/bookings', bookingRoutes);
-app.use('/api/subscriptions', subscriptionRoutes);
-app.use('/api/favorites', favoriteRoutes);
-app.use('/api/vehicles', vehicleRoutes);
-app.use('/api/vehicle_bookings', vehicleBookingRoutes);
-app.use('/api/vehicle-decorations', vehicleDecorationRoutes);
-app.use('/api/vehicle-options', vehicleOptionRoutes);
-app.use('/api/events', providerEventRoutes);
-app.use('/api/admin', adminRoutes);
+router.use('/api/auth', authRoutes);
+router.use('/api/categories', categoryRoutes);
+router.use('/api/cities', cityRoutes);
+router.use('/api/listings', listingRoutes);
+router.use('/api/leads', leadRoutes);
+router.use('/api/images', imageRoutes);
+router.use('/api/videos', videoRoutes);
+router.use('/api/packages', packageRoutes);
+router.use('/api/availability', availabilityRoutes);
+router.use('/api/promotions', promotionRoutes);
+router.use('/api/clients', clientRoutes);
+router.use('/api/contracts', contractRoutes);
+router.use('/api/invoices', invoiceRoutes);
+router.use('/api/reviews', reviewRoutes);
+router.use('/api/bookings', bookingRoutes);
+router.use('/api/subscriptions', subscriptionRoutes);
+router.use('/api/favorites', favoriteRoutes);
+router.use('/api/vehicles', vehicleRoutes);
+router.use('/api/vehicle_bookings', vehicleBookingRoutes);
+router.use('/api/vehicle-decorations', vehicleDecorationRoutes);
+router.use('/api/vehicle-options', vehicleOptionRoutes);
+router.use('/api/events', providerEventRoutes);
+router.use('/api/admin', adminRoutes);
 
+app.use(basePath, router);
 app.use(errorHandler);
 
 module.exports = app;
