@@ -7,6 +7,10 @@ const sequelizeOptions = {
   dialect: 'mysql',
   dialectModule: mysql2,
   logging: false,
+  // Le plan Dev de Clever Cloud limite fortement les connexions simultanees, et
+  // chaque instance serverless Vercel ouvre son propre pool : 1 connexion max par
+  // instance, liberee vite quand elle est inactive.
+  pool: { max: 1, min: 0, idle: 5000, acquire: 30000, evict: 1000 },
   define: {
     underscored: true,
     timestamps: true,
