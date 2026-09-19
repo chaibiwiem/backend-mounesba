@@ -34,7 +34,8 @@ const app = express();
 // CORS avec liste blanche de domaines (jamais * en production) — CLAUDE.md
 const allowedOrigins = (process.env.FRONTEND_URL || '').split(',').filter(Boolean);
 
-app.use(helmet());
+// cross-origin : le frontend (autre domaine) affiche les images /uploads du backend
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(
   cors({
     origin: allowedOrigins.length ? allowedOrigins : false,
