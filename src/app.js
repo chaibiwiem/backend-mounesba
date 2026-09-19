@@ -32,7 +32,11 @@ const { generalLimiter } = require('./middleware/rateLimiter');
 const app = express();
 
 // CORS avec liste blanche de domaines (jamais * en production) — CLAUDE.md
-const allowedOrigins = (process.env.FRONTEND_URL || '').split(',').filter(Boolean);
+// Tolere espaces, guillemets et "/" final dans les valeurs saisies.
+const allowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(/[,\s]+/)
+  .map((o) => o.replace(/^["']|["']$/g, '').replace(/\/+$/, ''))
+  .filter(Boolean);
 
 // cross-origin : le frontend (autre domaine) affiche les images /uploads du backend
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
