@@ -46,7 +46,16 @@ const createLeadValidators = [
     .withMessage('Nombre de passagers invalide.')
     .toInt(),
   body('vehicleId').optional({ checkFalsy: true }).isInt().withMessage('Véhicule invalide.').toInt(),
-  body('withDriver').optional().isBoolean().toBoolean(),
+  // checkFalsy : ContactForm envoie ce champ en chaine vide pour toute
+  // categorie hors Transport (spread complet du form standard, cf. le meme
+  // commentaire sur `passengers` plus haut) - sans checkFalsy, cette chaine
+  // vide echouait isBoolean() et renvoyait le message generique "Invalid
+  // value" d'express-validator (aucun .withMessage() sur cette ligne).
+  body('withDriver')
+    .optional({ checkFalsy: true })
+    .isBoolean()
+    .withMessage('Valeur invalide pour le chauffeur.')
+    .toBoolean(),
   body('decorationId').optional({ checkFalsy: true }).isInt().withMessage('Modèle de décoration invalide.').toInt(),
   body('pickupLocation').optional({ checkFalsy: true }).trim().isLength({ max: 255 }),
   body('options').optional().isArray().withMessage('Options invalides.'),
