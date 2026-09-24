@@ -1,5 +1,6 @@
 const { validationResult } = require('express-validator');
 const db = require('../models');
+const { memoize } = require('../utils/memoCache');
 
 const { City, Listing } = db;
 
@@ -23,19 +24,27 @@ exports.getCities = async (req, res, next) => {
 // exactement le toggle admin plutot que de les masquer. `listings.city`
 // etant une simple chaine (pas de FK, cf. models/City.js), le rapprochement
 // se fait par egalite de nom.
+// Memoizee 30s (voir utils/memoCache.js, meme raison que categoryController)
+// - cette route fait deja 1 requete par ville active (N+1), appelee a chaque
+// visite de la page d'accueil : sans cache, c'est la requete la plus lourde
+// en connexions/requetes DB du site pour un contenu qui ne change quasiment
+// jamais (nombre de prestataires actifs par ville).
+const computeCitiesWithCounts = memoize(async () => {
+  const cities = await City.findAll({
+    where: { isActive: true },
+    order: [['sortOrder', 'ASC'], ['name', 'ASC']],
+  });
+
+  const counts = await Promise.all(
+    cities.map((city) => Listing.count({ where: { city: city.name, status: 'active' } }))
+  );
+
+  return cities.map((city, index) => ({ id: city.id, name: city.name, count: counts[index] }));
+}, 30000);
+
 exports.getCitiesWithCounts = async (req, res, next) => {
   try {
-    const cities = await City.findAll({
-      where: { isActive: true },
-      order: [['sortOrder', 'ASC'], ['name', 'ASC']],
-    });
-
-    const counts = await Promise.all(
-      cities.map((city) => Listing.count({ where: { city: city.name, status: 'active' } }))
-    );
-
-    const results = cities.map((city, index) => ({ id: city.id, name: city.name, count: counts[index] }));
-
+    const results = await computeCitiesWithCounts();
     return res.json(results);
   } catch (err) {
     return next(err);
@@ -69,6 +78,7 @@ exports.createCity = async (req, res, next) => {
     }
 
     const city = await City.create({ name, sortOrder: sortOrder ?? 0 });
+    computeCitiesWithCounts.invalidate();
     return res.status(201).json(city);
   } catch (err) {
     return next(err);
@@ -101,6 +111,7 @@ exports.updateCity = async (req, res, next) => {
     if (isActive !== undefined) city.isActive = isActive;
     await city.save();
 
+    computeCitiesWithCounts.invalidate();
     return res.json(city);
   } catch (err) {
     return next(err);
@@ -115,6 +126,7 @@ exports.deleteCity = async (req, res, next) => {
     }
 
     await city.destroy();
+    computeCitiesWithCounts.invalidate();
     return res.json({ message: 'Ville supprimée.' });
   } catch (err) {
     return next(err);

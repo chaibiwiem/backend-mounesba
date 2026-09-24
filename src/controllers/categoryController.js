@@ -4,40 +4,50 @@ const { validationResult } = require('express-validator');
 const db = require('../models');
 const { UPLOAD_DIR, ICON_UPLOAD_DIR } = require('../middleware/upload');
 const cloudinaryStorage = require('../services/cloudinaryStorage');
+const { memoize } = require('../utils/memoCache');
 
 const { Category, Listing, AssociatedService } = db;
 
+// Appelee par la Navbar, le Footer et quasi chaque page publique - memoizee
+// 30s (voir utils/memoCache.js) : sans ca, chaque visite mettait deja 3-4
+// requetes DB en concurrence rien que pour cet endpoint, au-dessus de la
+// limite de connexions simultanees de la base hebergee.
+const buildCategoryTree = memoize(async () => {
+  const categories = await Category.findAll({
+    where: { isActive: true },
+    order: [['sortOrder', 'ASC']],
+    include: [
+      {
+        model: AssociatedService,
+        as: 'associatedServices',
+        attributes: ['id', 'nameFr', 'nameAr'],
+        separate: true,
+        order: [['sortOrder', 'ASC']],
+      },
+    ],
+  });
+
+  const byId = {};
+  const tree = [];
+
+  categories.forEach((cat) => {
+    byId[cat.id] = { ...cat.toJSON(), children: [] };
+  });
+
+  categories.forEach((cat) => {
+    if (cat.parentId && byId[cat.parentId]) {
+      byId[cat.parentId].children.push(byId[cat.id]);
+    } else if (!cat.parentId) {
+      tree.push(byId[cat.id]);
+    }
+  });
+
+  return tree;
+}, 30000);
+
 exports.getCategories = async (req, res, next) => {
   try {
-    const categories = await Category.findAll({
-      where: { isActive: true },
-      order: [['sortOrder', 'ASC']],
-      include: [
-        {
-          model: AssociatedService,
-          as: 'associatedServices',
-          attributes: ['id', 'nameFr', 'nameAr'],
-          separate: true,
-          order: [['sortOrder', 'ASC']],
-        },
-      ],
-    });
-
-    const byId = {};
-    const tree = [];
-
-    categories.forEach((cat) => {
-      byId[cat.id] = { ...cat.toJSON(), children: [] };
-    });
-
-    categories.forEach((cat) => {
-      if (cat.parentId && byId[cat.parentId]) {
-        byId[cat.parentId].children.push(byId[cat.id]);
-      } else if (!cat.parentId) {
-        tree.push(byId[cat.id]);
-      }
-    });
-
+    const tree = await buildCategoryTree();
     return res.json(tree);
   } catch (err) {
     return next(err);
@@ -116,6 +126,7 @@ exports.createCategory = async (req, res, next) => {
       sortOrder: sortOrder ?? 0,
     });
 
+    buildCategoryTree.invalidate();
     return res.status(201).json(category);
   } catch (err) {
     return next(err);
@@ -166,6 +177,7 @@ exports.updateCategory = async (req, res, next) => {
     if (isActive !== undefined) category.isActive = isActive;
     await category.save();
 
+    buildCategoryTree.invalidate();
     return res.json(category);
   } catch (err) {
     return next(err);
@@ -200,6 +212,7 @@ exports.uploadCategoryImage = async (req, res, next) => {
     await category.save();
     removeCategoryImageFile(previousImageUrl);
 
+    buildCategoryTree.invalidate();
     return res.json(category);
   } catch (err) {
     return next(err);
@@ -217,6 +230,7 @@ exports.deleteCategoryImage = async (req, res, next) => {
     category.imageUrl = null;
     await category.save();
 
+    buildCategoryTree.invalidate();
     return res.json(category);
   } catch (err) {
     return next(err);
@@ -249,6 +263,7 @@ exports.uploadCategoryIcon = async (req, res, next) => {
     await category.save();
     removeCategoryIconFile(previousIconUrl);
 
+    buildCategoryTree.invalidate();
     return res.json(category);
   } catch (err) {
     return next(err);
@@ -266,6 +281,7 @@ exports.deleteCategoryIcon = async (req, res, next) => {
     category.iconUrl = null;
     await category.save();
 
+    buildCategoryTree.invalidate();
     return res.json(category);
   } catch (err) {
     return next(err);
@@ -296,6 +312,7 @@ exports.createAssociatedService = async (req, res, next) => {
       sortOrder: sortOrder ?? 0,
     });
 
+    buildCategoryTree.invalidate();
     return res.status(201).json(service);
   } catch (err) {
     return next(err);
@@ -321,6 +338,7 @@ exports.updateAssociatedService = async (req, res, next) => {
     if (sortOrder !== undefined) service.sortOrder = sortOrder;
     await service.save();
 
+    buildCategoryTree.invalidate();
     return res.json(service);
   } catch (err) {
     return next(err);
@@ -335,6 +353,7 @@ exports.deleteAssociatedService = async (req, res, next) => {
     }
 
     await service.destroy();
+    buildCategoryTree.invalidate();
     return res.json({ message: 'Service supprimé.' });
   } catch (err) {
     return next(err);
@@ -363,6 +382,7 @@ exports.deleteCategory = async (req, res, next) => {
     }
 
     await category.destroy();
+    buildCategoryTree.invalidate();
     return res.json({ message: 'Catégorie supprimée.' });
   } catch (err) {
     return next(err);
