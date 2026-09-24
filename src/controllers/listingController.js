@@ -354,6 +354,12 @@ const EDITABLE_LISTING_FIELDS = [
   'languages',
 ];
 
+// Colonnes numeriques (DECIMAL/INTEGER) : le formulaire prestataire envoie une
+// chaine vide '' pour un champ laisse vide, jamais null - or MySQL refuse une
+// chaine vide dans une colonne numerique et faisait planter listing.save()
+// (500 generique, ex. "Années d'expérience" ou "Capacité min/max" vides).
+const NUMERIC_LISTING_FIELDS = ['priceFrom', 'priceTo', 'capacityMin', 'capacity', 'yearsExperience'];
+
 exports.getMyListing = async (req, res, next) => {
   try {
     const listing = await Listing.findOne({
@@ -397,7 +403,9 @@ exports.updateMyListing = async (req, res, next) => {
     }
 
     EDITABLE_LISTING_FIELDS.forEach((field) => {
-      if (req.body[field] !== undefined) listing[field] = req.body[field];
+      if (req.body[field] === undefined) return;
+      const value = req.body[field];
+      listing[field] = NUMERIC_LISTING_FIELDS.includes(field) && value === '' ? null : value;
     });
 
     await listing.save();
