@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const { sanitizeSvg, MAX_SVG_SIZE } = require('../utils/sanitizeSvg');
+const cloudinaryStorage = require('../services/cloudinaryStorage');
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 Mo
 const UPLOAD_DIR = path.join(__dirname, '../../uploads/listings');
@@ -44,7 +45,9 @@ const upload = multer({
 
 // Écrit un buffer déjà vérifié sur disque, sous un nom aléatoire (jamais le
 // nom d'origine), dans le dossier fourni. Renvoie le nom de fichier ou null
-// si le contenu n'est pas une vraie image JPG/PNG.
+// si le contenu n'est pas une vraie image JPG/PNG. Reserve aux fichiers qui
+// doivent rester locaux (documents legaux, jamais publics) - pour toute image
+// destinee a etre servie publiquement, voir persistImageToStorage ci-dessous.
 function persistBuffer(buffer, destDir) {
   const realMimeType = detectRealMimeType(buffer);
   if (!realMimeType) return null;
@@ -56,48 +59,80 @@ function persistBuffer(buffer, destDir) {
   return filename;
 }
 
-// À chaîner après upload.single('image') : écrit le fichier sur disque une
-// fois le contenu vérifié (galerie prestataire).
-function persistVerifiedImage(req, res, next) {
+// Stocke une image publique (galerie, vehicules, decorations, evenements,
+// avis, vignettes video...) sur Cloudinary quand des identifiants sont
+// configures (obligatoire en production serverless), sinon sur le disque
+// local sous uploads/<folder> (dev local uniquement). Renvoie l'URL complete
+// a stocker telle quelle en base (deja absolue pour Cloudinary, relative
+// /uploads/... sinon - cf. getMediaUrl cote frontend).
+async function persistImageToStorage(buffer, folder) {
+  const realMimeType = detectRealMimeType(buffer);
+  if (!realMimeType) return { url: null, error: true };
+
+  if (cloudinaryStorage.isConfigured) {
+    const format = realMimeType === 'image/png' ? 'png' : 'jpg';
+    const result = await cloudinaryStorage.uploadBuffer(buffer, { folder, resourceType: 'image', format });
+    return { url: result.secure_url, error: null };
+  }
+
+  const destDir = path.join(__dirname, '../../uploads', folder);
+  ensureDir(destDir);
+  const extension = realMimeType === 'image/png' ? '.png' : '.jpg';
+  const filename = `${crypto.randomBytes(16).toString('hex')}${extension}`;
+  fs.writeFileSync(path.join(destDir, filename), buffer);
+  return { url: `/uploads/${folder}/${filename}`, error: null };
+}
+
+// À chaîner après upload.single('image') : stocke le fichier une fois le
+// contenu vérifié (galerie prestataire, logo, icône de catégorie...).
+async function persistVerifiedImage(req, res, next) {
   if (!req.file) {
     return res.status(400).json({ message: 'Aucun fichier reçu.' });
   }
 
-  const filename = persistBuffer(req.file.buffer, UPLOAD_DIR);
-  if (!filename) {
-    return res
-      .status(400)
-      .json({ message: 'Format de fichier non supporté. Utilisez JPG ou PNG.' });
-  }
+  try {
+    const { url, error } = await persistImageToStorage(req.file.buffer, 'listings');
+    if (error) {
+      return res
+        .status(400)
+        .json({ message: 'Format de fichier non supporté. Utilisez JPG ou PNG.' });
+    }
 
-  req.uploadedFile = { filename, url: `/uploads/listings/${filename}` };
-  return next();
+    req.uploadedFile = { url };
+    return next();
+  } catch (err) {
+    return next(err);
+  }
 }
 
-// Verifie/ecrit un fichier image optionnel (contrairement a la galerie
+// Verifie/stocke un fichier image optionnel (contrairement a la galerie
 // photos ou l'image est obligatoire) - utilise par les vehicules et leurs
 // modeles de decoration, qui peuvent etre crees/modifies sans photo.
-function persistOptionalImage(file, res) {
+async function persistOptionalImage(file, res) {
   if (!file) return { imageUrl: undefined, error: null };
 
-  const realMimeType = detectRealMimeType(file.buffer);
-  if (!realMimeType) {
+  const { url, error } = await persistImageToStorage(file.buffer, 'listings');
+  if (error) {
     res.status(400).json({ message: 'Image invalide. Utilisez JPG ou PNG.' });
     return { imageUrl: undefined, error: true };
   }
 
-  const filename = persistBuffer(file.buffer, UPLOAD_DIR);
-  return { imageUrl: `/uploads/listings/${filename}`, error: null };
+  return { imageUrl: url, error: null };
 }
 
 // Remplace la valeur d'un champ image sur une instance Sequelize par la
-// nouvelle URL, en supprimant l'ancien fichier du disque (best-effort, non
-// bloquant). No-op si aucune nouvelle image n'a ete fournie.
+// nouvelle URL, en supprimant l'ancien fichier (best-effort, non bloquant) -
+// sur Cloudinary ou sur le disque local selon d'ou vient l'URL precedente.
+// No-op si aucune nouvelle image n'a ete fournie.
 function replaceStoredFile(instance, field, newImageUrl) {
   if (!newImageUrl) return;
   const previousImage = instance[field];
   instance[field] = newImageUrl;
-  if (previousImage?.startsWith('/uploads/listings/')) {
+  if (!previousImage) return;
+
+  if (/^https?:\/\//i.test(previousImage)) {
+    cloudinaryStorage.destroy(previousImage);
+  } else if (previousImage.startsWith('/uploads/listings/')) {
     const previousPath = path.join(UPLOAD_DIR, path.basename(previousImage));
     fs.unlink(previousPath, () => {});
   }
@@ -121,16 +156,27 @@ function detectRealVideoMimeType(buffer) {
   return match ? match[0] : null;
 }
 
-// Écrit un buffer video deja verifie sur disque, nom aleatoire. Renvoie le
-// nom de fichier ou null si le contenu n'est pas un vrai MP4/WebM.
-function persistVideoBuffer(buffer) {
+// Stocke une video deja verifiee sur Cloudinary (production) ou sur le disque
+// local (dev). Renvoie l'URL complete, ou null si le contenu n'est pas un
+// vrai MP4/WebM.
+async function persistVideoToStorage(buffer) {
   const realMimeType = detectRealVideoMimeType(buffer);
   if (!realMimeType) return null;
+
+  if (cloudinaryStorage.isConfigured) {
+    const format = realMimeType === 'video/webm' ? 'webm' : 'mp4';
+    const result = await cloudinaryStorage.uploadBuffer(buffer, {
+      folder: 'videos',
+      resourceType: 'video',
+      format,
+    });
+    return result.secure_url;
+  }
 
   const extension = realMimeType === 'video/webm' ? '.webm' : '.mp4';
   const filename = `${crypto.randomBytes(16).toString('hex')}${extension}`;
   fs.writeFileSync(path.join(VIDEO_UPLOAD_DIR, filename), buffer);
-  return filename;
+  return `/uploads/videos/${filename}`;
 }
 
 // Accepte le champ 'video' (upload direct, galerie video) et/ou 'thumbnail'
@@ -152,8 +198,10 @@ const uploadThumbnailOnly = multer({
 // Icone SVG d'une categorie (admin uniquement). Exception documentee a la
 // regle "JPG/PNG uniquement" de CLAUDE.md : un SVG est du texte/XML, pas une
 // image binaire, donc pas de signature "magic bytes" a verifier - a la place
-// le contenu est assaini (voir utils/sanitizeSvg.js) avant d'etre ecrit sur
-// disque. Limite basse (100 Ko) car une icone n'a pas besoin de plus.
+// le contenu est assaini (voir utils/sanitizeSvg.js) avant d'etre stocke.
+// Limite basse (100 Ko) car une icone n'a pas besoin de plus. Sur Cloudinary,
+// stocke en resource_type 'raw' (le contenu deja assaini ne presente pas le
+// risque XSS que Cloudinary bloque par defaut pour les SVG servis en image).
 const ICON_UPLOAD_DIR = path.join(__dirname, '../../uploads/icons');
 ensureDir(ICON_UPLOAD_DIR);
 
@@ -162,9 +210,8 @@ const uploadIcon = multer({
   limits: { fileSize: MAX_SVG_SIZE },
 });
 
-// A chainer apres uploadIcon.single('icon') : assainit puis ecrit le SVG sur
-// disque sous un nom aleatoire (jamais le nom d'origine).
-function persistVerifiedIcon(req, res, next) {
+// A chainer apres uploadIcon.single('icon') : assainit puis stocke le SVG.
+async function persistVerifiedIcon(req, res, next) {
   if (!req.file) {
     return res.status(400).json({ message: 'Aucun fichier reçu.' });
   }
@@ -174,11 +221,24 @@ function persistVerifiedIcon(req, res, next) {
     return res.status(400).json({ message: 'Fichier SVG invalide ou non supporté.' });
   }
 
-  const filename = `${crypto.randomBytes(16).toString('hex')}.svg`;
-  fs.writeFileSync(path.join(ICON_UPLOAD_DIR, filename), sanitized);
+  try {
+    if (cloudinaryStorage.isConfigured) {
+      const result = await cloudinaryStorage.uploadBuffer(sanitized, {
+        folder: 'icons',
+        resourceType: 'raw',
+        format: 'svg',
+      });
+      req.uploadedFile = { url: result.secure_url };
+      return next();
+    }
 
-  req.uploadedFile = { filename, url: `/uploads/icons/${filename}` };
-  return next();
+    const filename = `${crypto.randomBytes(16).toString('hex')}.svg`;
+    fs.writeFileSync(path.join(ICON_UPLOAD_DIR, filename), sanitized);
+    req.uploadedFile = { url: `/uploads/icons/${filename}` };
+    return next();
+  } catch (err) {
+    return next(err);
+  }
 }
 
 // Documents legaux sensibles (carte CIN du gerant...) - CLAUDE.md, section
@@ -186,7 +246,11 @@ function persistVerifiedIcon(req, res, next) {
 // volontairement HORS de backend/uploads (jamais servi par le
 // `express.static('/uploads', ...)` de app.js, contrairement aux
 // photos/videos) : seul un endpoint authentifie (proprietaire de la fiche ou
-// admin) peut les lire, jamais une URL publique devinable.
+// admin) peut les lire, jamais une URL publique devinable. Reste sur le
+// disque local pour l'instant (pas encore migre vers un stockage externe a
+// livraison authentifiee) - a la difference des photos/videos publiques,
+// donc toujours sujet a la limite disque en lecture seule des plateformes
+// serverless (Vercel) en production.
 const LEGAL_UPLOAD_DIR = path.join(__dirname, '../../private-uploads/legal');
 ensureDir(LEGAL_UPLOAD_DIR);
 
@@ -194,13 +258,14 @@ module.exports = {
   upload,
   persistVerifiedImage,
   persistOptionalImage,
+  persistImageToStorage,
   replaceStoredFile,
   persistBuffer,
   detectRealMimeType,
   UPLOAD_DIR,
   uploadVideoFields,
   uploadThumbnailOnly,
-  persistVideoBuffer,
+  persistVideoToStorage,
   detectRealVideoMimeType,
   VIDEO_UPLOAD_DIR,
   LEGAL_UPLOAD_DIR,

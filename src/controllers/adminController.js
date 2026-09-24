@@ -5,7 +5,7 @@ const { validationResult } = require('express-validator');
 const db = require('../models');
 const emailService = require('../services/emailService');
 const reviewService = require('../services/reviewService');
-const { persistBuffer, detectRealMimeType, UPLOAD_DIR, LEGAL_UPLOAD_DIR } = require('../middleware/upload');
+const { persistBuffer, persistImageToStorage, detectRealMimeType, LEGAL_UPLOAD_DIR } = require('../middleware/upload');
 const { PLAN_CATALOG, VALID_PLANS, addInterval, updatePlanCatalogEntry } = require('../services/planService');
 const { generateUniqueListingSlug } = require('../utils/slugify');
 
@@ -485,10 +485,10 @@ exports.createProvider = async (req, res, next) => {
     });
 
     for (let i = 0; i < files.length; i += 1) {
-      const filename = persistBuffer(files[i].buffer, UPLOAD_DIR);
+      const { url } = await persistImageToStorage(files[i].buffer, 'listings');
       await Image.create({
         listingId: listing.id,
-        url: `/uploads/listings/${filename}`,
+        url,
         isPrimary: i === 0,
         sortOrder: i,
       });

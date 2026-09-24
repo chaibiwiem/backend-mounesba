@@ -3,6 +3,7 @@ const fs = require('fs');
 const { Op } = require('sequelize');
 const db = require('../models');
 const { UPLOAD_DIR } = require('../middleware/upload');
+const cloudinaryStorage = require('../services/cloudinaryStorage');
 const { encrypt } = require('../utils/secretCipher');
 const emailService = require('../services/emailService');
 
@@ -409,7 +410,12 @@ exports.updateMyListing = async (req, res, next) => {
 // Supprime l'ancien fichier logo stocke sur disque, le cas echeant (jamais
 // pour un logo deja externe/absent).
 function removeLogoFile(logoUrl) {
-  if (!logoUrl || !logoUrl.startsWith('/uploads/listings/')) return;
+  if (!logoUrl) return;
+  if (/^https?:\/\//i.test(logoUrl)) {
+    cloudinaryStorage.destroy(logoUrl);
+    return;
+  }
+  if (!logoUrl.startsWith('/uploads/listings/')) return;
   const filePath = path.join(UPLOAD_DIR, path.basename(logoUrl));
   fs.unlink(filePath, () => {});
 }

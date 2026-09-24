@@ -5,10 +5,11 @@ const { parseVideoUrl } = require('../utils/videoEmbed');
 const {
   VIDEO_UPLOAD_DIR,
   UPLOAD_DIR,
-  persistVideoBuffer,
-  persistBuffer,
-  detectRealMimeType,
+  persistVideoToStorage,
+  persistImageToStorage,
+  replaceStoredFile,
 } = require('../middleware/upload');
+const cloudinaryStorage = require('../services/cloudinaryStorage');
 
 const { Video, Listing } = db;
 const MAX_VIDEOS = 5;
@@ -34,17 +35,16 @@ async function checkVideoQuota(listingId, res) {
 // Vignette personnalisee (JPG/PNG) fournie par le prestataire : prioritaire
 // sur toute vignette derivee automatiquement (ex. YouTube). Meme verification
 // que les photos de galerie (magic bytes, jamais l'extension declaree).
-function persistCustomThumbnail(file, res) {
+async function persistCustomThumbnail(file, res) {
   if (!file) return { thumbnailUrl: undefined, error: null };
 
-  const realMimeType = detectRealMimeType(file.buffer);
-  if (!realMimeType) {
+  const { url, error } = await persistImageToStorage(file.buffer, 'listings');
+  if (error) {
     res.status(400).json({ message: 'Vignette invalide. Utilisez JPG ou PNG.' });
     return { thumbnailUrl: undefined, error: true };
   }
 
-  const filename = persistBuffer(file.buffer, UPLOAD_DIR);
-  return { thumbnailUrl: `/uploads/listings/${filename}`, error: null };
+  return { thumbnailUrl: url, error: null };
 }
 
 exports.getListingVideos = async (req, res, next) => {
@@ -81,7 +81,7 @@ exports.addVideoLink = async (req, res, next) => {
     const currentCount = await checkVideoQuota(listing.id, res);
     if (currentCount === null) return;
 
-    const customThumbnail = persistCustomThumbnail(req.files?.thumbnail?.[0], res);
+    const customThumbnail = await persistCustomThumbnail(req.files?.thumbnail?.[0], res);
     if (customThumbnail.error) return;
 
     const video = await Video.create({
@@ -117,20 +117,20 @@ exports.uploadVideoFile = async (req, res, next) => {
     const currentCount = await checkVideoQuota(listing.id, res);
     if (currentCount === null) return;
 
-    const filename = persistVideoBuffer(videoFile.buffer);
-    if (!filename) {
+    const videoUrl = await persistVideoToStorage(videoFile.buffer);
+    if (!videoUrl) {
       return res
         .status(400)
         .json({ message: 'Format de fichier non supporté. Utilisez MP4 ou WebM.' });
     }
 
-    const customThumbnail = persistCustomThumbnail(req.files?.thumbnail?.[0], res);
+    const customThumbnail = await persistCustomThumbnail(req.files?.thumbnail?.[0], res);
     if (customThumbnail.error) return;
 
     const video = await Video.create({
       listingId: listing.id,
       type: 'upload',
-      url: `/uploads/videos/${filename}`,
+      url: videoUrl,
       embedUrl: null,
       thumbnailUrl: customThumbnail.thumbnailUrl ?? null,
       title: req.body.title || null,
@@ -158,16 +158,10 @@ exports.updateVideo = async (req, res, next) => {
 
     const thumbnailFile = req.files?.thumbnail?.[0];
     if (thumbnailFile) {
-      const customThumbnail = persistCustomThumbnail(thumbnailFile, res);
+      const customThumbnail = await persistCustomThumbnail(thumbnailFile, res);
       if (customThumbnail.error) return;
 
-      const previousThumbnail = video.thumbnailUrl;
-      video.thumbnailUrl = customThumbnail.thumbnailUrl;
-
-      if (previousThumbnail?.startsWith('/uploads/listings/')) {
-        const previousPath = path.join(UPLOAD_DIR, path.basename(previousThumbnail));
-        fs.unlink(previousPath, () => {});
-      }
+      replaceStoredFile(video, 'thumbnailUrl', customThumbnail.thumbnailUrl);
     }
 
     if (req.body.title !== undefined) {
@@ -191,13 +185,23 @@ exports.deleteVideo = async (req, res, next) => {
       return res.status(404).json({ message: 'Vidéo introuvable.' });
     }
 
+    // Suppression best-effort, non bloquante - sur Cloudinary ou sur le
+    // disque local selon d'ou vient chaque fichier.
     if (video.type === 'upload') {
-      const filePath = path.join(VIDEO_UPLOAD_DIR, path.basename(video.url));
-      fs.unlink(filePath, () => {}); // best-effort, non bloquant
+      if (/^https?:\/\//i.test(video.url)) {
+        cloudinaryStorage.destroy(video.url, 'video');
+      } else {
+        const filePath = path.join(VIDEO_UPLOAD_DIR, path.basename(video.url));
+        fs.unlink(filePath, () => {});
+      }
     }
-    if (video.thumbnailUrl?.startsWith('/uploads/listings/')) {
-      const thumbnailPath = path.join(UPLOAD_DIR, path.basename(video.thumbnailUrl));
-      fs.unlink(thumbnailPath, () => {});
+    if (video.thumbnailUrl) {
+      if (/^https?:\/\//i.test(video.thumbnailUrl)) {
+        cloudinaryStorage.destroy(video.thumbnailUrl);
+      } else if (video.thumbnailUrl.startsWith('/uploads/listings/')) {
+        const thumbnailPath = path.join(UPLOAD_DIR, path.basename(video.thumbnailUrl));
+        fs.unlink(thumbnailPath, () => {});
+      }
     }
 
     await video.destroy();

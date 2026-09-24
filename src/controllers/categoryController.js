@@ -3,6 +3,7 @@ const fs = require('fs');
 const { validationResult } = require('express-validator');
 const db = require('../models');
 const { UPLOAD_DIR, ICON_UPLOAD_DIR } = require('../middleware/upload');
+const cloudinaryStorage = require('../services/cloudinaryStorage');
 
 const { Category, Listing, AssociatedService } = db;
 
@@ -174,7 +175,12 @@ exports.updateCategory = async (req, res, next) => {
 // Supprime l'ancien fichier image stocke sur disque, le cas echeant (meme
 // pipeline que le logo prestataire - listingController.removeLogoFile).
 function removeCategoryImageFile(imageUrl) {
-  if (!imageUrl || !imageUrl.startsWith('/uploads/listings/')) return;
+  if (!imageUrl) return;
+  if (/^https?:\/\//i.test(imageUrl)) {
+    cloudinaryStorage.destroy(imageUrl);
+    return;
+  }
+  if (!imageUrl.startsWith('/uploads/listings/')) return;
   const filePath = path.join(UPLOAD_DIR, path.basename(imageUrl));
   fs.unlink(filePath, () => {});
 }
@@ -221,7 +227,12 @@ exports.deleteCategoryImage = async (req, res, next) => {
 // distincte de l'image de vignette ci-dessus). Le fichier a deja ete assaini
 // et ecrit sur disque par persistVerifiedIcon avant d'arriver ici.
 function removeCategoryIconFile(iconUrl) {
-  if (!iconUrl || !iconUrl.startsWith('/uploads/icons/')) return;
+  if (!iconUrl) return;
+  if (/^https?:\/\//i.test(iconUrl)) {
+    cloudinaryStorage.destroy(iconUrl, 'raw');
+    return;
+  }
+  if (!iconUrl.startsWith('/uploads/icons/')) return;
   const filePath = path.join(ICON_UPLOAD_DIR, path.basename(iconUrl));
   fs.unlink(filePath, () => {});
 }
