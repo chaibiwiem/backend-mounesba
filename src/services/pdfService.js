@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const PDFDocument = require('pdfkit');
 const { UPLOAD_DIR: LISTINGS_UPLOAD_DIR } = require('../middleware/upload');
 const { PLAN_CATALOG } = require('./planService');
+const cloudinaryStorage = require('./cloudinaryStorage');
 
 const ROSE_LIGHT = '#FDE4E9';
 const INK = '#1F2933';
@@ -30,20 +31,40 @@ try {
   console.error(`Impossible de creer le dossier de documents ${DOCUMENTS_DIR} :`, err.message);
 }
 
-function writePdf(buildFn) {
+// Genere le PDF entierement en memoire (PDFDocument est lui-meme un flux
+// lisible : 'data'/'end'/'error' suffisent, pas besoin de fichier
+// intermediaire) - necessaire pour pouvoir l'envoyer a Cloudinary ensuite.
+function buildPdfBuffer(buildFn) {
   return new Promise((resolve, reject) => {
-    const filename = `${crypto.randomBytes(16).toString('hex')}.pdf`;
-    const filePath = path.join(DOCUMENTS_DIR, filename);
     const doc = new PDFDocument({ margin: 50 });
-    const stream = fs.createWriteStream(filePath);
-
-    doc.pipe(stream);
+    const chunks = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
     buildFn(doc);
     doc.end();
-
-    stream.on('finish', () => resolve(`/uploads/documents/${filename}`));
-    stream.on('error', reject);
   });
+}
+
+// Stocke le PDF sur Cloudinary quand configure (obligatoire en production
+// serverless - meme raison que persistImageToStorage dans middleware/upload.js :
+// le systeme de fichiers de Vercel est en lecture seule hors /tmp, ecrire une
+// facture/un contrat sur disque y echouait silencieusement, laissant en base
+// une URL /uploads/documents/... dont le fichier n'a jamais existe sur ce
+// serveur), sinon sur le disque local (dev uniquement). resource_type 'raw'
+// (comme les icones SVG) : un PDF n'est pas une image a transformer/servir en
+// tant que telle, juste un fichier a livrer tel quel.
+async function writePdf(buildFn) {
+  const buffer = await buildPdfBuffer(buildFn);
+
+  if (cloudinaryStorage.isConfigured) {
+    const result = await cloudinaryStorage.uploadBuffer(buffer, { folder: 'documents', resourceType: 'raw', format: 'pdf' });
+    return result.secure_url;
+  }
+
+  const filename = `${crypto.randomBytes(16).toString('hex')}.pdf`;
+  fs.writeFileSync(path.join(DOCUMENTS_DIR, filename), buffer);
+  return `/uploads/documents/${filename}`;
 }
 
 // Contrat prestataire -> client (M7) : mise en page lettre formelle (bloc

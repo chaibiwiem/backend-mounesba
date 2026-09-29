@@ -29,6 +29,17 @@ function clearPlatformSettingsCache() {
   platformSettingsCache = undefined;
 }
 
+// pdfUrl est soit une URL Cloudinary deja absolue (production), soit un
+// chemin relatif /uploads/documents/... servi par le BACKEND (dev local
+// uniquement, cf. pdfService.js) - jamais par le frontend. Prefixer par
+// FRONTEND_URL un chemin relatif donnerait un lien mort en production
+// (les deux tournent sur des domaines Vercel distincts) ; ne rien changer
+// pour une URL deja absolue.
+function toAbsoluteDocumentLink(pdfUrl) {
+  if (/^https?:\/\//i.test(pdfUrl)) return pdfUrl;
+  return `${process.env.FRONTEND_URL}${pdfUrl}`;
+}
+
 // Envoie via l'API Resend (pas de dependance supplementaire : appel HTTP
 // direct avec le fetch natif de Node 18+).
 async function sendViaResend(apiKey, { from, to, subject, html }) {
@@ -273,7 +284,7 @@ async function sendLeadAcknowledgementEmail(lead, listing) {
 
 async function sendContractEmail(client, contract, listing, pdfUrl) {
   if (!client?.email) return;
-  const link = `${process.env.FRONTEND_URL}${pdfUrl}`;
+  const link = toAbsoluteDocumentLink(pdfUrl);
   await sendMail(
     client.email,
     `Votre contrat - ${listing.title}`,
@@ -287,7 +298,7 @@ async function sendContractEmail(client, contract, listing, pdfUrl) {
 
 async function sendInvoiceEmail(client, invoice, listing, pdfUrl) {
   if (!client?.email) return;
-  const link = `${process.env.FRONTEND_URL}${pdfUrl}`;
+  const link = toAbsoluteDocumentLink(pdfUrl);
   await sendMail(
     client.email,
     `Votre facture ${invoice.number} - ${listing.title}`,
@@ -366,7 +377,7 @@ async function sendSubscriptionExpiryReminderEmail(user, subscription) {
 // facture le prestataire, jamais l'inverse.
 async function sendSubscriptionInvoiceEmail(owner, invoice, pdfUrl) {
   if (!owner?.email) return;
-  const link = `${process.env.FRONTEND_URL}${pdfUrl}`;
+  const link = toAbsoluteDocumentLink(pdfUrl);
   await sendMail(
     owner.email,
     `Votre facture d'abonnement ${invoice.number} - Mounesba`,
