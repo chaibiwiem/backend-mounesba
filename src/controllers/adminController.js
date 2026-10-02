@@ -524,6 +524,12 @@ const EDITABLE_PROVIDER_FIELDS = [
   'languages',
 ];
 
+// Colonnes numeriques (DECIMAL/INTEGER) : le formulaire admin "Modifier la
+// fiche" envoie une chaine vide '' pour un champ laisse vide, jamais null -
+// meme bug que listingController.updateMyListing (cote prestataire), ici
+// reproduit pour l'edition admin (ex. "Prix de départ"/"Prix maximum" vides).
+const NUMERIC_PROVIDER_FIELDS = ['priceFrom', 'priceTo', 'avgSpent', 'capacity', 'yearsExperience'];
+
 // --- Gestion du cycle de vie d'une fiche (Super Admin / Moderateur) --------
 
 // Modification libre d'une fiche par l'admin (Super Admin uniquement).
@@ -547,9 +553,9 @@ exports.updateProvider = async (req, res, next) => {
     }
 
     EDITABLE_PROVIDER_FIELDS.forEach((field) => {
-      if (req.body[field] !== undefined) {
-        listing[field] = req.body[field];
-      }
+      if (req.body[field] === undefined) return;
+      const value = req.body[field];
+      listing[field] = NUMERIC_PROVIDER_FIELDS.includes(field) && value === '' ? null : value;
     });
 
     await listing.save();

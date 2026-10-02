@@ -17,6 +17,12 @@ const EDITABLE_BOOKING_FIELDS = [
   'status',
 ];
 
+// Colonnes numeriques (DECIMAL) : un champ laisse vide dans le formulaire
+// (BookingFormModal) envoie '' plutot que null - meme bug que
+// listingController.updateMyListing/adminController.updateProvider,
+// corrige ici par precaution avant qu'il ne se manifeste en production.
+const NUMERIC_BOOKING_FIELDS = ['totalPrice', 'deposit'];
+
 async function getOwnListing(req, res) {
   const listing = await Listing.findOne({ where: { userId: req.user.id } });
   if (!listing) {
@@ -257,7 +263,9 @@ exports.updateBooking = async (req, res, next) => {
     }
 
     EDITABLE_BOOKING_FIELDS.forEach((field) => {
-      if (req.body[field] !== undefined) booking[field] = req.body[field];
+      if (req.body[field] === undefined) return;
+      const value = req.body[field];
+      booking[field] = NUMERIC_BOOKING_FIELDS.includes(field) && value === '' ? null : value;
     });
 
     await booking.save();
