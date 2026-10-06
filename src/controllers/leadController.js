@@ -6,6 +6,7 @@ const emailService = require('../services/emailService');
 const crmService = require('../services/crmService');
 const { isTransportListing } = require('../services/transportService');
 const { isProductCategoryListing } = require('../services/productCategoryService');
+const { isAccommodationListing } = require('../services/accommodationService');
 
 const STATUS_EXPORT_LABELS = {
   new: 'En attente',
@@ -28,6 +29,7 @@ const {
   LeadOption,
   ProviderEvent,
   Package,
+  Availability,
 } = db;
 
 // Attributs renvoyes pour chaque option choisie (LeadOption + son
@@ -82,6 +84,24 @@ const estimatedLeadAmount = (lead) => {
   return extrasAmount > 0 ? Math.round(extrasAmount * 100) / 100 : null;
 };
 
+function pad(n) {
+  return String(n).padStart(2, '0');
+}
+
+// Chaque nuit couverte par un sejour [arrivalDate, departureDate[ (borne de
+// depart exclue : la nuit du depart n'est pas occupee) - meme principe que
+// availabilityController.dateRangeStrings pour les locations de vehicule.
+function nightsBetween(arrival, departure) {
+  const nights = [];
+  const cursor = new Date(arrival.getFullYear(), arrival.getMonth(), arrival.getDate());
+  const last = new Date(departure.getFullYear(), departure.getMonth(), departure.getDate());
+  while (cursor < last) {
+    nights.push(`${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}-${pad(cursor.getDate())}`);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return nights;
+}
+
 exports.createLead = async (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -121,6 +141,9 @@ exports.createLead = async (req, res, next) => {
     deliveryMode,
     deliveryAddress,
     customization,
+    arrivalDate,
+    departureDate,
+    rooms,
   } = req.body;
 
   try {
@@ -270,6 +293,49 @@ exports.createLead = async (req, res, next) => {
       };
     }
 
+    // Champs sejour (arrivee/depart/chambres) : uniquement conserves pour un
+    // prestataire "Maisons d'hôtes", jamais pour les autres (ignores
+    // silencieusement si un appelant les envoie hors contexte) - meme
+    // traitement que transportFields/productFields ci-dessus.
+    let accommodationFields = {
+      arrivalDate: null,
+      departureDate: null,
+      rooms: null,
+    };
+    if (await isAccommodationListing(listing)) {
+      if (!Array.isArray(rooms) || rooms.length === 0) {
+        return res.status(400).json({ message: 'Au moins une chambre est requise.' });
+      }
+
+      if (arrivalDate && departureDate) {
+        const nights = nightsBetween(new Date(arrivalDate), new Date(departureDate));
+
+        const blockedDates = await Availability.findAll({
+          where: { listingId: listing.id, date: { [Op.in]: nights }, isAvailable: false },
+        });
+        if (blockedDates.length > 0) {
+          return res.status(409).json({
+            message: 'Ce prestataire est indisponible sur une partie de cette période. Merci de choisir d’autres dates.',
+          });
+        }
+
+        const confirmedOnRange = await Booking.findOne({
+          where: { listingId: listing.id, status: { [Op.in]: ['confirmed', 'completed'] }, eventDate: { [Op.in]: nights } },
+        });
+        if (confirmedOnRange) {
+          return res.status(409).json({
+            message: 'Ce prestataire est déjà réservé sur une partie de cette période. Merci de choisir d’autres dates.',
+          });
+        }
+      }
+
+      accommodationFields = {
+        arrivalDate: arrivalDate || null,
+        departureDate: departureDate || null,
+        rooms: Array.isArray(rooms) && rooms.length > 0 ? rooms : null,
+      };
+    }
+
     const lead = await Lead.create({
       listingId,
       userId: req.user ? req.user.id : null,
@@ -285,6 +351,7 @@ exports.createLead = async (req, res, next) => {
       providerEventId: validatedProviderEvent ? validatedProviderEvent.id : null,
       ...transportFields,
       ...productFields,
+      ...accommodationFields,
     });
     // Association deja resolue plus haut (pas besoin de re-interroger) :
     // Sequelize ne recharge pas les includes apres create(), donc affectee
@@ -483,6 +550,9 @@ exports.exportListingLeads = async (req, res, next) => {
       { header: 'Mode de livraison', key: 'deliveryMode', width: 16 },
       { header: 'Adresse de livraison', key: 'deliveryAddress', width: 26 },
       { header: 'Personnalisation', key: 'customization', width: 30 },
+      { header: 'Arrivée (séjour)', key: 'arrivalDate', width: 16 },
+      { header: 'Départ (séjour)', key: 'departureDate', width: 16 },
+      { header: 'Chambre(s) et occupation', key: 'rooms', width: 36 },
       { header: 'Statut', key: 'status', width: 14 },
       { header: 'Message', key: 'message', width: 40 },
       { header: 'Reçue le', key: 'createdAt', width: 20 },
@@ -521,6 +591,18 @@ exports.exportListingLeads = async (req, res, next) => {
         deliveryMode: lead.deliveryMode === 'livraison' ? 'Livraison' : lead.deliveryMode === 'retrait' ? 'Retrait' : '',
         deliveryAddress: lead.deliveryAddress || '',
         customization: lead.customization || '',
+        arrivalDate: lead.arrivalDate || '',
+        departureDate: lead.departureDate || '',
+        rooms: Array.isArray(lead.rooms)
+          ? lead.rooms
+              .map((room, index) => {
+                const parts = [`${room.adults} adulte(s)`];
+                if (room.children) parts.push(`${room.children} enfant(s)`);
+                if (room.cribs) parts.push(`${room.cribs} lit(s) bébé`);
+                return `Ch. ${index + 1} (${parts.join(', ')})`;
+              })
+              .join(' · ')
+          : '',
         status: STATUS_EXPORT_LABELS[lead.status] || lead.status,
         message: lead.message || '',
         createdAt: lead.createdAt.toISOString().slice(0, 16).replace('T', ' '),

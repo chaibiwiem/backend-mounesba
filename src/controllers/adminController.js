@@ -552,6 +552,43 @@ exports.updateProvider = async (req, res, next) => {
       }
     }
 
+    // Coordonnees du gerant (compte User proprietaire, distinct du telephone
+    // "phone" de l'entreprise ci-dessus) : memes verifications d'unicite
+    // qu'a l'inscription (authController.register), en excluant le compte
+    // lui-meme pour ne pas se bloquer sur sa propre valeur inchangee.
+    const { managerFirstName, managerLastName, managerEmail, managerPhone } = req.body;
+    const managerFieldsProvided =
+      managerFirstName !== undefined ||
+      managerLastName !== undefined ||
+      managerEmail !== undefined ||
+      managerPhone !== undefined;
+
+    if (managerFieldsProvided) {
+      const owner = await User.findByPk(listing.userId);
+      if (!owner) {
+        return res.status(404).json({ message: 'Compte du gérant introuvable.' });
+      }
+
+      if (managerEmail !== undefined && managerEmail !== owner.email) {
+        const existingEmail = await User.findOne({ where: { email: managerEmail } });
+        if (existingEmail && existingEmail.id !== owner.id) {
+          return res.status(409).json({ message: 'Cet email est déjà utilisé par un autre compte.' });
+        }
+      }
+      if (managerPhone !== undefined && managerPhone !== owner.phone) {
+        const existingPhone = await User.findOne({ where: { phone: managerPhone } });
+        if (existingPhone && existingPhone.id !== owner.id) {
+          return res.status(409).json({ message: 'Ce numéro de téléphone est déjà utilisé par un autre compte.' });
+        }
+      }
+
+      if (managerFirstName !== undefined) owner.firstName = managerFirstName;
+      if (managerLastName !== undefined) owner.lastName = managerLastName;
+      if (managerEmail !== undefined) owner.email = managerEmail;
+      if (managerPhone !== undefined) owner.phone = managerPhone;
+      await owner.save();
+    }
+
     EDITABLE_PROVIDER_FIELDS.forEach((field) => {
       if (req.body[field] === undefined) return;
       const value = req.body[field];

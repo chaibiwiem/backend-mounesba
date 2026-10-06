@@ -1,3 +1,18 @@
+// MariaDB stocke DataTypes.JSON en LONGTEXT (meme situation que
+// Listing.js/jsonColumnGetter) : le driver ne le signale pas comme JSON, donc
+// Sequelize ne parse pas automatiquement la valeur lue.
+function jsonColumnGetter(field) {
+  return function get() {
+    const raw = this.getDataValue(field);
+    if (typeof raw !== 'string') return raw;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  };
+}
+
 module.exports = (sequelize, DataTypes) => {
   const Lead = sequelize.define(
     'Lead',
@@ -52,6 +67,13 @@ module.exports = (sequelize, DataTypes) => {
       // NULL si le client n'a pas de produit precis en tete ("Autre / a definir").
       packageId: { type: DataTypes.BIGINT.UNSIGNED },
       customization: { type: DataTypes.TEXT },
+      // Champs specifiques aux prestataires "Maisons d'hôtes" (sejour sur une
+      // periode plutot qu'une prestation a l'unite) - renseignes uniquement
+      // dans ce cas, jamais pour les autres categories (voir
+      // leadController.createLead). `rooms` : [{ adults, children, cribs }].
+      arrivalDate: { type: DataTypes.DATEONLY },
+      departureDate: { type: DataTypes.DATEONLY },
+      rooms: { type: DataTypes.JSON, get: jsonColumnGetter('rooms') },
     },
     {
       tableName: 'leads',

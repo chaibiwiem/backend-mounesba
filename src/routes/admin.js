@@ -80,6 +80,16 @@ const updateProviderValidators = [
   body('instagramUrl').optional({ checkFalsy: true }).isLength({ max: 200 }),
   body('yearsExperience').optional({ checkFalsy: true }).isInt({ min: 0 }).toInt(),
   body('languages').optional({ checkFalsy: true }).isLength({ max: 160 }),
+  // Coordonnees du gerant (compte User proprietaire de la fiche, distinct du
+  // telephone "phone" ci-dessus qui est celui de l'entreprise) - voir
+  // adminController.updateProvider.
+  body('managerFirstName').optional({ checkFalsy: true }).trim().isLength({ max: 80 }),
+  body('managerLastName').optional({ checkFalsy: true }).trim().isLength({ max: 80 }),
+  body('managerEmail').optional({ checkFalsy: true }).isEmail().withMessage('Email du gérant invalide.').normalizeEmail(),
+  body('managerPhone')
+    .optional({ checkFalsy: true })
+    .matches(/^\+?\d{8,15}$/)
+    .withMessage('Téléphone du gérant invalide.'),
 ];
 
 // Modification libre d'une fiche : reservee au Super Admin.

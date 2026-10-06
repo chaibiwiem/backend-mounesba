@@ -206,6 +206,16 @@ async function sendNewLeadEmail(providerUser, lead, listing) {
   // ne sont renseignes que pour les prestataires "Parfums & Soins", voir
   // leadController.createLead.
   const isProductLead = Boolean(lead.quantity || lead.deliveryDate || lead.deliveryMode);
+  // Meme principe : les champs sejour ne sont renseignes que pour les
+  // prestataires "Maisons d'hôtes", voir leadController.createLead.
+  const isAccommodationLead = Boolean(lead.arrivalDate);
+
+  const formatRoomLabel = (room, index) => {
+    const parts = [`${room.adults} adulte${room.adults > 1 ? 's' : ''}`];
+    if (room.children) parts.push(`${room.children} enfant${room.children > 1 ? 's' : ''}`);
+    if (room.cribs) parts.push(`${room.cribs} lit${room.cribs > 1 ? 's' : ''} bébé`);
+    return `Chambre ${index + 1} : ${parts.join(', ')}`;
+  };
 
   // Demande d'interet sur un evenement prestataire (M5) : le contexte est
   // deja donne par eventLine, pas besoin de repeter date/invites (non
@@ -240,6 +250,12 @@ async function sendNewLeadEmail(providerUser, lead, listing) {
           ? `Adresse de livraison : ${lead.deliveryAddress}`
           : null,
         lead.customization ? `Personnalisation : ${lead.customization}` : null,
+      ]
+    : isAccommodationLead
+    ? [
+        `Arrivée : ${lead.arrivalDate}`,
+        lead.departureDate ? `Départ : ${lead.departureDate}` : null,
+        ...(Array.isArray(lead.rooms) ? lead.rooms.map(formatRoomLabel) : []),
       ]
     : [
         `Date de l'événement : ${lead.eventDate || 'Non précisée'} ${lead.dateFlexible ? '(flexible)' : ''}`,

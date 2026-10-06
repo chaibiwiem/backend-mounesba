@@ -100,6 +100,28 @@ const createLeadValidators = [
       return true;
     }),
   body('customization').optional({ checkFalsy: true }).isLength({ max: 1000 }),
+  // Champs sejour (prestataires "Maisons d'hôtes" uniquement, cf.
+  // leadController - ignores pour les autres categories meme si envoyes).
+  body('arrivalDate').optional({ checkFalsy: true }).isISO8601().withMessage("Date d'arrivée invalide."),
+  body('departureDate')
+    .optional({ checkFalsy: true })
+    .isISO8601()
+    .withMessage('Date de départ invalide.')
+    .custom((value, { req }) => {
+      if (req.body.arrivalDate && new Date(value) <= new Date(req.body.arrivalDate)) {
+        throw new Error("La date de départ doit être postérieure à la date d'arrivée.");
+      }
+      return true;
+    }),
+  // Pas de { min: 1 } ici : ContactForm envoie toujours au moins une chambre
+  // par defaut mais ce champ est spread tel quel pour toute categorie (comme
+  // `options`/`optionQuantities` pour Transport) - le controller rejette
+  // explicitement l'absence de chambre, mais seulement pour un prestataire
+  // "Maisons d'hôtes" (leadController.createLead).
+  body('rooms').optional().isArray().withMessage('Chambres invalides.'),
+  body('rooms.*.adults').isInt({ min: 1, max: 20 }).withMessage("Nombre d'adultes invalide.").toInt(),
+  body('rooms.*.children').optional().isInt({ min: 0, max: 20 }).withMessage("Nombre d'enfants invalide.").toInt(),
+  body('rooms.*.cribs').optional().isInt({ min: 0, max: 10 }).withMessage('Nombre de lits bébé invalide.').toInt(),
 ];
 
 router.post('/', leadLimiter, optionalAuth, createLeadValidators, leadController.createLead);
